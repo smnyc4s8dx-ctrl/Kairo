@@ -30,6 +30,8 @@ struct TaskListView: View {
                     parentRow(task)
 
                     if expandedIDs.contains(task.persistentModelID) {
+                        expandedDetails(for: task)
+
                         ForEach(task.sortedChildren) { child in
                             childRow(child, under: task)
                         }
@@ -47,24 +49,7 @@ struct TaskListView: View {
 
     @ViewBuilder
     private func parentRow(_ task: TaskItem) -> some View {
-        HStack(spacing: 8) {
-            if task.hasChildren {
-                Button {
-                    withAnimation(.smooth) {
-                        toggleExpanded(task.persistentModelID)
-                    }
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(expandedIDs.contains(task.persistentModelID) ? 90 : 0))
-                        .frame(width: 16, height: 16)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Spacer().frame(width: 16)
-            }
-
+        HStack(alignment: .center, spacing: 8) {
             TaskRowView(
                 task: task,
                 isActive: engine.activeTask?.persistentModelID == task.persistentModelID,
@@ -75,9 +60,26 @@ struct TaskListView: View {
             if task.hasChildren {
                 progressBadge(done: task.completedChildCount, total: task.children.count)
             }
+
+            if hasExpandable(task) {
+                Button {
+                    withAnimation(.smooth) {
+                        toggleExpanded(task.persistentModelID)
+                    }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expandedIDs.contains(task.persistentModelID) ? 90 : 0))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .contentShape(Rectangle())
-        .onTapGesture { editingTask = task }
+        .onTapGesture { openEditor(for: task) }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) { delete(task) } label: {
                 Label("Delete", systemImage: "trash")
@@ -145,6 +147,94 @@ struct TaskListView: View {
             .foregroundStyle(done == total ? .green : .secondary)
     }
 
+    @ViewBuilder
+    private func expandedDetails(for task: TaskItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !task.notes.isEmpty {
+                Text(task.notes)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if hasMetadata(task) {
+                metadataBadges(for: task)
+            }
+        }
+        .padding(.leading, 32)
+        .padding(.vertical, 4)
+    }
+
+    private func metadataBadges(for task: TaskItem) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                if task.priority != .none {
+                    metaBadge(
+                        text: task.priority.label,
+                        system: task.priority.symbol,
+                        tint: priorityColor(task.priority)
+                    )
+                }
+                if let due = task.dueDate {
+                    metaBadge(
+                        text: due.formatted(.dateTime.month(.abbreviated).day()),
+                        system: "calendar",
+                        tint: isOverdue(due, task: task) ? .red : .orange
+                    )
+                }
+                if let recur = task.recurrence {
+                    metaBadge(
+                        text: recur.contextualLabel(dueDate: task.dueDate),
+                        system: "repeat",
+                        tint: .purple
+                    )
+                }
+                if task.carryOverCount > 0 {
+                    metaBadge(
+                        text: "\(task.carryOverCount)×",
+                        system: "arrow.uturn.forward",
+                        tint: .orange
+                    )
+                }
+            }
+        }
+    }
+
+    private func metaBadge(text: String, system: String, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: system).font(.caption2)
+            Text(text).font(.caption2.weight(.medium))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(tint.opacity(0.15)))
+        .foregroundStyle(tint)
+    }
+
+    private func priorityColor(_ priority: TaskItem.Priority) -> Color {
+        switch priority {
+        case .none: .gray
+        case .low: .blue
+        case .medium: .orange
+        case .high: .red
+        }
+    }
+
+    private func isOverdue(_ due: Date, task: TaskItem) -> Bool {
+        !task.isComplete && due < Calendar.current.startOfDay(for: .now)
+    }
+
+    private func hasMetadata(_ task: TaskItem) -> Bool {
+        task.priority != .none
+            || task.dueDate != nil
+            || task.recurrence != nil
+            || task.carryOverCount > 0
+    }
+
+    private func hasExpandable(_ task: TaskItem) -> Bool {
+        task.hasChildren || !task.notes.isEmpty || hasMetadata(task)
+    }
+
     private func toggleExpanded(_ id: PersistentIdentifier) {
         if expandedIDs.contains(id) {
             expandedIDs.remove(id)
@@ -153,17 +243,23 @@ struct TaskListView: View {
         }
     }
 
+    private func openEditor(for task: TaskItem) {
+        editingTask = task
+    }
+
     private func toggle(_ task: TaskItem) {
         let willBeComplete = !task.isComplete
-        task.setComplete(willBeComplete)
+        let cascaded = task.setComplete(willBeComplete)
         if willBeComplete {
-            // Clear active-task reference if it or any of its children were active.
-            let completedIDs = Set([task.persistentModelID] + task.children.map(\.persistentModelID))
+            let completedIDs = Set([task.persistentModelID] + cascaded)
             if let activeID = engine.activeTask?.persistentModelID, completedIDs.contains(activeID) {
                 engine.activeTask = nil
             }
+            try? context.save()
+            task.postCompletionUndo(cascaded: cascaded, context: context)
+        } else {
+            try? context.save()
         }
-        try? context.save()
     }
 
     private func delete(_ task: TaskItem) {
@@ -185,6 +281,8 @@ struct CompletedTasksSheet: View {
         order: .reverse
     )
     private var completed: [TaskItem]
+
+    @State private var showClearConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -219,10 +317,41 @@ struct CompletedTasksSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
+                if !completed.isEmpty {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(role: .destructive) {
+                            showClearConfirm = true
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .tint(.red)
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Delete all completed tasks?",
+                isPresented: $showClearConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Delete \(completed.count) \(completed.count == 1 ? "Task" : "Tasks")",
+                       role: .destructive) {
+                    clearAll()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This cannot be undone.")
             }
         }
+    }
+
+    private func clearAll() {
+        for task in completed {
+            context.delete(task)
+        }
+        try? context.save()
+        ToastCenter.shared.show("Cleared all completed tasks")
     }
 }

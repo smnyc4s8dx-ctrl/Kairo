@@ -188,6 +188,19 @@ struct AddEditTaskSheet: View {
     }
 
     private var chipRow: some View {
+        #if os(macOS)
+        // Plain HStack on macOS — wrapping in a horizontal ScrollView lets trackpad
+        // left/right gestures dismiss the sheet. The sheet is sized wide enough to
+        // fit all four chips once the Menu dropdown chevrons are hidden.
+        HStack(spacing: 8) {
+            priorityChip
+            dueDateChip
+            recurrenceChip
+            notesChip
+        }
+        #else
+        // Horizontal scroll on iPhone — active chip labels ("Every Friday", date)
+        // can exceed the iPhone content width; scroll preserves full visibility.
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 priorityChip
@@ -196,6 +209,7 @@ struct AddEditTaskSheet: View {
                 notesChip
             }
         }
+        #endif
     }
 
     private var titleRow: some View {
@@ -254,6 +268,7 @@ struct AddEditTaskSheet: View {
                 isActive: priority != .none
             )
         }
+        .menuIndicator(.hidden)
     }
 
     private var dueDateChip: some View {
@@ -296,6 +311,7 @@ struct AddEditTaskSheet: View {
                 isActive: hasDueDate
             )
         }
+        .menuIndicator(.hidden)
     }
 
     private var recurrenceChip: some View {
@@ -324,6 +340,7 @@ struct AddEditTaskSheet: View {
                 isActive: hasRecurrence
             )
         }
+        .menuIndicator(.hidden)
     }
 
     private var notesChip: some View {

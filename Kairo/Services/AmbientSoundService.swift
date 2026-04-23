@@ -30,29 +30,28 @@ enum AmbientSound: String, CaseIterable, Identifiable, Codable {
 final class AmbientSoundService {
     static let shared = AmbientSoundService()
 
-    private let engine = AVAudioEngine()
+    // Lazy — creating AVAudioEngine at launch pokes the audio HAL and, under
+    // App Sandbox on macOS, can trigger an audioanalyticsd mach-lookup that
+    // the process isn't authorized to make. We defer until the user actually
+    // plays a sound.
+    private var engine: AVAudioEngine?
     private var sourceNode: AVAudioSourceNode?
     private(set) var current: AmbientSound = .none
 
-    var volume: Float {
-        didSet { engine.mainMixerNode.outputVolume = volume }
+    var volume: Float = 0.5 {
+        didSet { engine?.mainMixerNode.outputVolume = volume }
     }
 
-    private init() {
-        self.volume = 0.5
-        engine.mainMixerNode.outputVolume = volume
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setCategory(
-            .ambient, mode: .default, options: [.mixWithOthers]
-        )
-        #endif
-    }
+    private init() {}
 
     func play(_ sound: AmbientSound) {
         stop()
         guard sound != .none else { current = .none; return }
 
-        let format = engine.mainMixerNode.outputFormat(forBus: 0)
+        let eng = ensureEngine()
+        eng.mainMixerNode.outputVolume = volume
+
+        let format = eng.mainMixerNode.outputFormat(forBus: 0)
         let generate = makeGenerator(for: sound)
 
         let node = AVAudioSourceNode { _, _, frameCount, audioBufferList -> OSStatus in
@@ -67,14 +66,14 @@ final class AmbientSoundService {
             return noErr
         }
 
-        engine.attach(node)
-        engine.connect(node, to: engine.mainMixerNode, format: format)
+        eng.attach(node)
+        eng.connect(node, to: eng.mainMixerNode, format: format)
 
         do {
             #if os(iOS)
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
-            try engine.start()
+            try eng.start()
             sourceNode = node
             current = sound
         } catch {
@@ -83,15 +82,27 @@ final class AmbientSoundService {
     }
 
     func stop() {
-        if let node = sourceNode {
+        if let node = sourceNode, let engine {
             engine.detach(node)
             sourceNode = nil
         }
-        if engine.isRunning { engine.stop() }
+        if engine?.isRunning == true { engine?.stop() }
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
         #endif
         current = .none
+    }
+
+    private func ensureEngine() -> AVAudioEngine {
+        if let engine { return engine }
+        let eng = AVAudioEngine()
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setCategory(
+            .ambient, mode: .default, options: [.mixWithOthers]
+        )
+        #endif
+        engine = eng
+        return eng
     }
 
     private func makeGenerator(for sound: AmbientSound) -> () -> Float {

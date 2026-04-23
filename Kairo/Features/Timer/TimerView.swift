@@ -4,7 +4,6 @@ import SwiftData
 struct TimerView: View {
     @Environment(TimerEngine.self) private var engine
     @Environment(AppSettings.self) private var settings
-    @Environment(AmbientSoundService.self) private var sounds
 
     let compact: Bool
 
@@ -14,16 +13,22 @@ struct TimerView: View {
 
     var body: some View {
         VStack(spacing: compact ? 16 : 24) {
-            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                timerDial
-            }
+            dialTimeline
 
             activeTaskChip
 
             controls
         }
         .padding(compact ? 16 : 24)
-        .animation(.smooth, value: engine.phase)
+    }
+
+    /// Always wrap the dial in a `TimelineView`; inside, decide whether to
+    /// actually consume ticks. Swapping the outer view structure on phase change
+    /// can trigger a macOS AppKit layout recursion inside a MenuBarExtra popover.
+    private var dialTimeline: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            timerDial
+        }
     }
 
     private var timerDial: some View {
@@ -38,7 +43,6 @@ struct TimerView: View {
                 Text(engine.remaining.mmss)
                     .font(.system(size: compact ? 44 : 72, weight: .light, design: .rounded))
                     .monospacedDigit()
-                    .contentTransition(.numericText(countsDown: true))
 
                 Text(phaseLabel)
                     .font(.caption)
@@ -85,26 +89,24 @@ struct TimerView: View {
     private var controls: some View {
         switch engine.phase {
         case .idle:
-            Button {
+            primaryPill("Start Wave", systemImage: "play.fill") {
                 engine.startFocus(with: engine.activeTask)
-            } label: {
-                controlLabel("Start Wave", systemImage: "play.fill")
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
 
         case .focus:
-            HStack(spacing: 12) {
-                secondaryButton("Skip", systemImage: "forward.end.fill") {
+            HStack(spacing: 18) {
+                iconCircle(systemImage: "forward.end.fill", label: "Skip") {
                     engine.skip()
                 }
-                primaryButton(
+
+                primaryPill(
                     engine.isPaused ? "Resume" : "Pause",
                     systemImage: engine.isPaused ? "play.fill" : "pause.fill"
                 ) {
                     engine.isPaused ? engine.resume() : engine.pause()
                 }
-                secondaryButton("Done Early", systemImage: "checkmark.circle.fill") {
+
+                iconCircle(systemImage: "checkmark.circle.fill", label: "Done Early") {
                     engine.endFocusEarlyComplete()
                 }
                 .disabled(engine.activeTask == nil)
@@ -112,62 +114,93 @@ struct TimerView: View {
 
         case .awaitingEndDecision:
             HStack(spacing: 12) {
-                Button(role: .none) {
+                Button {
                     engine.markElapsedWaveCarryOver()
                 } label: {
-                    controlLabel("Carry Over", systemImage: "arrow.uturn.forward")
+                    Label("Carry Over", systemImage: "arrow.uturn.forward")
+                        .font(.subheadline.weight(.medium))
+                        .frame(minWidth: 100)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
                 .disabled(engine.activeTask == nil)
+                .help("Keep this task for the next wave")
 
                 Button {
                     engine.markElapsedWaveComplete()
                 } label: {
-                    controlLabel("Mark Complete", systemImage: "checkmark.circle.fill")
+                    Label("Mark Complete", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(minWidth: 120)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .help("Mark this task done and take a break")
             }
 
         case .shortBreak, .longBreak:
-            HStack(spacing: 12) {
-                if engine.endDate == nil {
-                    Button {
-                        engine.startBreakIfPending()
-                    } label: {
-                        controlLabel("Start Break", systemImage: "play.fill")
+            if engine.endDate == nil {
+                primaryPill("Start Break", systemImage: "play.fill") {
+                    engine.startBreakIfPending()
+                }
+            } else {
+                HStack(spacing: 18) {
+                    iconCircle(systemImage: "forward.end.fill", label: "Skip Break") {
+                        engine.skip()
                     }
-                    .buttonStyle(.borderedProminent)
-                } else {
-                    secondaryButton(
+                    primaryPill(
                         engine.isPaused ? "Resume" : "Pause",
                         systemImage: engine.isPaused ? "play.fill" : "pause.fill"
                     ) {
                         engine.isPaused ? engine.resume() : engine.pause()
-                    }
-                    secondaryButton("Skip Break", systemImage: "forward.end.fill") {
-                        engine.skip()
                     }
                 }
             }
         }
     }
 
-    private func controlLabel(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .labelStyle(.titleAndIcon)
-            .frame(minWidth: 110)
-    }
-
-    private func primaryButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { controlLabel(title, systemImage: systemImage) }
+    private func primaryPill(
+        _ title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: 6) {
+            Button(action: action) {
+                Label(title, systemImage: systemImage)
+                    .font(.body.weight(.semibold))
+                    .frame(minWidth: 120)
+            }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .help(title)
+
+            // Invisible caption preserves layout parity with iconCircle's visible caption.
+            Text(title)
+                .font(.caption2)
+                .hidden()
+        }
     }
 
-    private func secondaryButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { controlLabel(title, systemImage: systemImage) }
+    private func iconCircle(
+        systemImage: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: 6) {
+            Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.title3.weight(.medium))
+                    .frame(width: 52, height: 52)
+            }
             .buttonStyle(.bordered)
-            .controlSize(.large)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(label)
+            .help(label)
+
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var phaseLabel: String {

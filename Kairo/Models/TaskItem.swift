@@ -111,15 +111,44 @@ extension TaskItem {
     }
 
     /// Set completion state and optionally cascade to children.
-    /// Cascading only runs on completion → true, never on uncheck (destructive to un-complete children silently).
-    func setComplete(_ value: Bool, cascadeChildren: Bool = true) {
+    /// Returns the IDs of children that were newly completed by the cascade (for undo).
+    /// Cascading only runs on completion → true, never on uncheck (silently un-completing children is destructive).
+    @discardableResult
+    func setComplete(_ value: Bool, cascadeChildren: Bool = true) -> [PersistentIdentifier] {
         isComplete = value
         completedAt = value ? .now : nil
+        var cascaded: [PersistentIdentifier] = []
         if value && cascadeChildren {
             for child in children where !child.isComplete {
                 child.isComplete = true
                 child.completedAt = .now
+                cascaded.append(child.persistentModelID)
             }
+        }
+        return cascaded
+    }
+
+    /// Posts a transient "Undo" toast that reverses this completion and
+    /// un-completes any children that were cascaded by the original action.
+    @MainActor
+    func postCompletionUndo(cascaded: [PersistentIdentifier], context: ModelContext) {
+        let title = self.title
+        let taskID = self.persistentModelID
+        ToastCenter.shared.show(
+            "Completed \u{201C}\(title)\u{201D}",
+            actionLabel: "Undo"
+        ) {
+            if let t = context.model(for: taskID) as? TaskItem {
+                t.isComplete = false
+                t.completedAt = nil
+            }
+            for id in cascaded {
+                if let c = context.model(for: id) as? TaskItem {
+                    c.isComplete = false
+                    c.completedAt = nil
+                }
+            }
+            try? context.save()
         }
     }
 

@@ -7,7 +7,7 @@ struct TaskRowView: View {
     var onMakeActive: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Button(action: onToggleComplete) {
                 Image(systemName: task.isComplete ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
@@ -15,44 +15,14 @@ struct TaskRowView: View {
                     .symbolEffect(.bounce, value: task.isComplete)
             }
             .buttonStyle(.plain)
+            .help(task.isComplete ? "Mark as incomplete" : "Mark complete")
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(task.title)
-                    .font(.body)
-                    .strikethrough(task.isComplete)
-                    .foregroundStyle(task.isComplete ? .secondary : .primary)
-                    .lineLimit(2)
-
-                HStack(spacing: 8) {
-                    if task.priority != .none {
-                        Label(task.priority.label, systemImage: task.priority.symbol)
-                            .labelStyle(.titleAndIcon)
-                            .font(.caption2)
-                            .foregroundStyle(priorityColor)
-                    }
-                    if let due = task.dueDate {
-                        Label {
-                            Text(due, format: .dateTime.month(.abbreviated).day())
-                        } icon: {
-                            Image(systemName: "calendar")
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(isOverdue ? .red : .secondary)
-                    }
-                    if let recur = task.recurrence {
-                        Label(recur.contextualLabel(dueDate: task.dueDate), systemImage: "repeat")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if task.carryOverCount > 0 {
-                        Label("\(task.carryOverCount)", systemImage: "arrow.uturn.forward")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                }
-            }
-
-            Spacer(minLength: 4)
+            Text(task.title)
+                .font(.body)
+                .strikethrough(task.isComplete)
+                .foregroundStyle(task.isComplete ? .secondary : .primary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if isActive {
                 Image(systemName: "target")
@@ -60,6 +30,7 @@ struct TaskRowView: View {
                     .foregroundStyle(Color.accentColor)
                     .padding(6)
                     .background(Color.accentColor.opacity(0.15), in: Circle())
+                    .help("Active focus task")
             } else if !task.isComplete {
                 Button(action: onMakeActive) {
                     Image(systemName: "target")
@@ -69,23 +40,10 @@ struct TaskRowView: View {
                         .background(.thinMaterial, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .help("Focus on this task")
             }
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
-    }
-
-    private var priorityColor: Color {
-        switch task.priority {
-        case .none: .secondary
-        case .low: .blue
-        case .medium: .orange
-        case .high: .red
-        }
-    }
-
-    private var isOverdue: Bool {
-        guard let due = task.dueDate, !task.isComplete else { return false }
-        return due < Calendar.current.startOfDay(for: .now)
     }
 }
